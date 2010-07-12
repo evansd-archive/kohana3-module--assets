@@ -27,7 +27,7 @@ class Controller_Assets_Javascript extends Controller_Assets
 	/**
 	 * @var  string  Content-Type header
 	 */
-	public $content_type = 'application/x-javascript';
+	public $content_type = 'application/javascript';
 	
 	/**
 	 * @var  string  Directory where JavaScript files are stored
