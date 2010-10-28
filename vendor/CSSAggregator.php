@@ -20,7 +20,7 @@ class CSSAggregator
 			
 			$base = self::build_url($url);
 			
-			$output = preg_replace('#url\("'.preg_quote($base, '#').'#', 'url(/', $output); 
+			$output = preg_replace('#url\("'.preg_quote($base, '#').'#', 'url("/', $output); 
 		}
 		
 		return $output;
