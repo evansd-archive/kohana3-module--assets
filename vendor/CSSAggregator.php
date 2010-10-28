@@ -62,7 +62,7 @@ class CSSAggregator
 		$contents = preg_replace('/@import\s+"([^"]+)"/', '@import url("$1")', $contents);
 		
 		// Find all URLs
-		preg_match_all('/url\(.*[^\\\]\)/', $contents, $matches);
+		preg_match_all('/url\(.*?[^\\\]\)/', $contents, $matches);
 		
 		$urls = array_unique($matches[0]);
 		$replacements = array();
