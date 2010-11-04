@@ -57,7 +57,7 @@ class Controller_Assets_CSS extends Controller_Assets
 	/**
 	 * @var  boolean Enables concatinating of @import'ed files into a single file
 	 */
-	public $process_imports = TRUE;
+	public $process_imports = FALSE;
 
 	public function action_process($file)
 	{
@@ -70,17 +70,15 @@ class Controller_Assets_CSS extends Controller_Assets
 		// Process @import statements
 		else
 		{
-			$absolute_url = URL::site($this->request->uri, TRUE);
-			
 			require_once Kohana::find_file('vendor', 'CSSAggregator');
 			
-			// Initialise the CSS Aggregator, passing a reference to to the
-			// `load_file_if_local()` method which will be used by the
-			// aggregator to get the contents of local CSS files
-			$aggregator = new CSSAggregator(array($this, 'load_file_if_local'));
+			$absolute_url = URL::site($this->request->uri, TRUE);
 			
-			// Load file, along with all @import'ed files
-			$output = $aggregator->process($absolute_url);
+			// Pass in a reference to the `load_file_if_local()` method
+			// which will be used by the aggregator to get the contents
+			// of local CSS files
+			$output = CSSAggregator::process($absolute_url, array(
+				'load_callback' => array($this, 'load_file_if_local')));
 		}
 		
 		if ($this->compress)
@@ -108,7 +106,7 @@ class Controller_Assets_CSS extends Controller_Assets
 		extract($this->vars, EXTR_SKIP);
 
 		include $filename;
-
+	
 		// Fetch the output and close the buffer
 		return ob_get_clean();
 	}

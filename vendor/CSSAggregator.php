@@ -1,37 +1,33 @@
 <?php
 class CSSAggregator
 {
-	protected $load_function;
-	
-	public function __construct($load_function = NULL)
-	{		
-		$this->load_function = $load_function;
-	}
-	
-	public function process($url, $keep_absolute_urls = FALSE)
+	public static function process($url, $config)
 	{
-		$output = $this->import($url);
+		$config = $config + array('base_url' => NULL, 'document_root' => NULL,
+			'load_callback' => NULL, 'keep_absolute_urls' => FALSE);
 		
-		if ( ! $keep_absolute_urls)
+		if ($config['base_url'])
 		{
-			$url = parse_url($url);
-			unset($url['query'], $url['fragment']);
-			$url['path'] = '/';
-			
-			$base = self::build_url($url);
-			
-			$output = preg_replace('#url\("'.preg_quote($base, '#').'#', 'url("/', $output); 
+			$url = self::url_join($url, $config['base_url']);
+		}
+		
+		$output = self::import($url, $config);
+		
+		if ( ! $config['keep_absolute_urls'])
+		{
+			$root_url = self::url_join('/', $url);
+			$output = preg_replace('#url\("'.preg_quote($root_url, '#').'#', 'url("/', $output); 
 		}
 		
 		return $output;
 	}
 	
-	protected function import($url, &$imported_files = array())
+	protected static function import($url, $config, &$imported_files = array())
 	{
 		// Load the file contents
-		$contents = $this->load_file($url);
+		$contents = self::load_file($url, $config['document_root'], $config['base_url'], $config['load_callback']);
 		
-		$contents = $this->make_urls_absolute($contents, $url);
+		$contents = self::make_urls_absolute($contents, $url);
 		
 		if (strpos($contents, '@import') !== FALSE)
 		{
@@ -45,7 +41,7 @@ class CSSAggregator
 					if ( ! in_array($import_url, $imported_files))
 					{
 						$imported_files[] = $import_url;
-						$lines[$index] = $this->import($import_url, $imported_files);
+						$lines[$index] = self::import($import_url, $config, $imported_files);
 					}
 				}
 			}
@@ -56,13 +52,13 @@ class CSSAggregator
 		return $contents;
 	}
 	
-	protected function make_urls_absolute($contents, $base_url)
+	public static function make_urls_absolute($css, $base_url)
 	{
 		// Wrap bare @import strings with url()
-		$contents = preg_replace('/@import\s+"([^"]+)"/', '@import url("$1")', $contents);
+		$css = preg_replace('/@import\s+"([^"]+)"/', '@import url("$1")', $css);
 		
 		// Find all URLs
-		preg_match_all('/url\(.*?[^\\\]\)/', $contents, $matches);
+		preg_match_all('/url\(.*?[^\\\]\)/', $css, $matches);
 		
 		$urls = array_unique($matches[0]);
 		$replacements = array();
@@ -79,77 +75,103 @@ class CSSAggregator
 			$replacements[$index] = 'url("'.$url.'")';
 		}
 		
-		return str_replace($urls, $replacements, $contents);
+		// Replace all URLs with absolute-ised versions
+		return str_replace($urls, $replacements, $css);
 	}
 	
-	protected function load_file($url)
+	protected static function load_file($url, $doc_root, $base_url, $callback)
 	{
-		$contents = ($this->load_function)
-		            ? call_user_func($this->load_function, $url)
+		// Call user defined load function, if defined
+		$contents = ($callback)
+		            ? call_user_func($callback, $url)
 		            : NULL;
 		
 		if ( ! is_string($contents))
 		{
-			$contents = file_get_contents($url);
+			if ($base_url AND strpos($url, $base_url) === 0)
+			{
+				$path = $doc_root.'/'.substr($url, strlen($base_url));
+				$contents = file_get_contents($path);
+			}
+			else
+			{
+				$contents = file_get_contents($url);
+			}
 		}
 		
 		return $contents;
 	}
 	
-	protected static function url_join($url, $base)
+	public static function url_join($url, $base)
 	{
 		$base = parse_url($base);
 		$url  = parse_url($url);
-			
-		if(isset($base['path']))
+		
+		foreach(array('scheme', 'user', 'pass', 'host', 'port', 'path', 'query', 'fragment') as $key)
 		{
-			$path = explode('/', $base['path']);
-			$base['path'] = end($path);
-			$path[key($path)] = '';
-			$base['base'] = join('/', $path);
+			if (isset($url[$key]))
+			{
+				if ($key == 'path' AND isset($base['path']))
+				{
+					$url['path'] = self::url_path_join($url['path'], $base['path']);
+				}
+				
+				break;
+			}
+			elseif (isset($base[$key]))
+			{
+				$url[$key] = $base[$key];
+			}
 		}
 		
-		if(isset($url['path']) AND $url['path'][0] == '/')
+		if (isset($url['path']))
 		{
-			$url['base'] = $url['path'];
-			unset($url['path']);
-		}
-		
-		foreach(array('scheme', 'host', 'port', 'base', 'path', 'query', 'fragment') as $key)
-		{
-			if(isset($url[$key]))
-			{
-				$base[$key] = $url[$key];
-				$found = TRUE;
-			}
-			elseif( ! empty($found))
-			{
-				unset($base[$key]);	
-			}
-			
+			$url['path'] = self::path_simplify($url['path']);
 		}
 
-		if(isset($base['base']))
-		{
-			$base['path'] = $base['base'] . @$base['path'];
-			unset($base['base']);
-		}
+		return self::build_url($url);
+	}
+	
+	public static function url_path_join($path, $base)
+	{
+		return ($path == '')
+		       ? $base
+		       : (($path[0] == '/')
+		          ? $path
+		          : substr($base, 0, strrpos($base, '/')).'/'.$path);
+	}
+	
+	public static function path_simplify($path)
+	{
+		// Regex to match any url segment that's not a single dot or two dots
+		$any_char = '[^/]';
+		$not_a_dot ='[^/\.]';
+		$url_segment = "($not_a_dot|$not_a_dot$any_char|$any_char$not_a_dot|$any_char{3,})";
 		
-		return self::build_url($base);
+		$dotted_paths = array
+		(
+			'#/\.(/|$)#',                   // Single dot
+			'#/'.$url_segment.'/\.\.(/|$)#' // Double dot
+		);
+		
+		do
+		{
+			$path = preg_replace($dotted_paths, '/', $path, -1, $count);
+		}
+		while ($count > 0);
+		
+		return $path;
 	}
 
-
-	protected static function build_url($parts)
+	public static function build_url($parts)
 	{
-		$url = '';
-
-		if(isset($parts['scheme'])) $url .= $parts['scheme'] . '://';
-		if(isset($parts['host'])) $url .= $parts['host'];
-		if(isset($parts['port'])) $url .= ':' . $parts['port'];
-		if(isset($parts['path'])) $url .= $parts['path'];
-		if(isset($parts['query'])) $url .= '?' . $parts['query'];
-		if(isset($parts['fragment'])) $url .= '#' . $parts['fragment'];
-		
-		return $url;
+		return 
+				 ((isset($parts['scheme'])) ? $parts['scheme'].'://' : '')
+				.((isset($parts['user'])) ? $parts['user'].((isset($parts['pass'])) ? ':'.$parts['pass'] : '').'@' : '')
+				.((isset($parts['host'])) ? $parts['host'] : '')
+				.((isset($parts['port'])) ? ':'.$parts['port'] : '')
+				.((isset($parts['path'])) ? $parts['path'] : '')
+				.((isset($parts['query'])) ? '?'.$parts['query'] : '')
+				.((isset($parts['fragment'])) ? '#'.$parts['fragment'] : '');
 	}
 }
